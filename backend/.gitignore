@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Runtime data
+traffic_data.db
+traffic_data.db-shm
+traffic_data.db-wal
+*.pt
+
+# Editor/OS junk
+.vscode/
+.idea/
+.DS_Store

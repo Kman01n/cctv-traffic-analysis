@@ -1,0 +1,14 @@
+# Node
+node_modules/
+dist/
+.vite/
+package-lock.json
+
+# Editor/OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment secrets
+.env

@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+ultralytics
+opencv-python
+easyocr
+pydantic
+# Pinned below 2.0: easyocr/opencv-python wheels on some platforms still expect
+# the numpy 1.x ABI and raise "numpy.dtype size changed" / import errors under
+# numpy 2.x. If you hit that error, this pin is why - safe to drop once your
+# specific opencv/easyocr versions confirm numpy 2.x support.
+numpy<2
