@@ -26,6 +26,13 @@ from datetime import datetime
 
 import cv2
 
+# cv2.CascadeClassifier.detectMultiScale is NOT thread-safe: two threads calling it
+# concurrently on the SAME classifier instance corrupts its internal scale-pyramid
+# state, producing intermittent "Assertion failed 0 <= scaleIdx..." / "invalid
+# vector<T> subscript" crashes. Each OCR worker thread gets its own private
+# CascadeClassifier (built lazily, once per thread) instead of sharing one.
+_PLATE_CASCADE_FILE = cv2.data.haarcascades + "haarcascade_russian_plate_number.xml"
+
 
 class CCTVDetector:
     """
@@ -35,14 +42,22 @@ class CCTVDetector:
     """
 
     def __init__(self, source, model, plate_cascade, reader, db_path="traffic_data.db",
-                 ocr_interval=2, plate_min_confidence=0.45, plate_lock_confidence=0.60,
-                 line_position=0.6):
+                 ocr_interval=2, plate_min_confidence=0.25, plate_lock_confidence=0.45,
+                 line_position=0.75, detect_every_n=2):
         self.source = source
         self.db_path = db_path
         self.ocr_interval = ocr_interval
         self.plate_min_confidence = plate_min_confidence
         self.plate_lock_confidence = plate_lock_confidence
         self.line_position = line_position
+        # Run the (expensive) YOLO detect+track call on every Nth frame instead of
+        # every single frame. In between, the last annotated frame is reused - the
+        # WebSocket still pushes at its fixed rate, but skipped frames cost almost
+        # nothing to produce. detect_every_n=2 roughly halves per-frame CPU cost;
+        # bump higher (3, 4...) for more speed at the cost of choppier-looking video.
+        self.detect_every_n = detect_every_n
+        self._last_annotated = None
+        self._last_stats = {}
 
         # Passed in already-loaded so starting/stopping sessions is fast - the
         # expensive one-time cost happens once at server startup, not on every
@@ -94,6 +109,10 @@ class CCTVDetector:
         # Track_ids currently being OCR'd by a background worker, so a vehicle doesn't
         # get submitted twice while its first job is still running.
         self.ocr_pending = set()
+
+        # One CascadeClassifier per worker thread (see _PLATE_CASCADE_FILE note above)
+        # instead of sharing self.plate_cascade across threads.
+        self._cascade_local = threading.local()
 
         # Smoothed real processing FPS - reflects actual frame throughput (detection +
         # draw), decoupled from the WebSocket's fixed push rate to the browser.
@@ -171,14 +190,33 @@ class CCTVDetector:
             return None, None
 
         self.frame_count += 1
+
+        # Skip the expensive detect+track call on most frames - reuse the last
+        # annotated result instead. Always run it on frame 1 so there's something
+        # to reuse from the start.
+        do_detect = (self.frame_count == 1) or (self.frame_count % self.detect_every_n == 0)
+        if not do_detect:
+            elapsed = time.time() - frame_start_time
+            if elapsed > 0:
+                instant_fps = 1 / elapsed
+                self.processing_fps = (0.9 * self.processing_fps + 0.1 * instant_fps
+                                        if self.processing_fps else instant_fps)
+            annotated_frame = self._last_annotated if self._last_annotated is not None else frame.copy()
+            stats = dict(self._last_stats)
+            stats["frame"] = self.frame_count
+            stats["processing_fps"] = round(self.processing_fps, 1)
+            return annotated_frame, stats
+
         process_plates = (self.frame_count % self.ocr_interval == 0)
 
         # classes=[2,5,7] restricts YOLO to car/bus/truck (COCO ids), so a single vehicle
         # never gets flagged under two different classes producing two boxes.
         # iou=0.5 (tighter than the 0.7 default) makes NMS merge overlapping boxes more
         # aggressively, so one physical vehicle doesn't survive as two separate detections.
+        # imgsz=640 (YOLO's default, down from 960) is the single biggest speed lever
+        # here on CPU - a modest accuracy trade-off for vehicle-sized objects.
         results = self.model.track(frame, persist=True, verbose=False, conf=0.25,
-                                    iou=0.5, imgsz=960, classes=[2, 5, 7])
+                                    iou=0.5, imgsz=640, classes=[2, 5, 7])
         boxes = results[0].boxes
         annotated_frame = frame.copy()
 
@@ -223,7 +261,12 @@ class CCTVDetector:
                     prev_cx, prev_cy, prev_frame = self.prev_positions[track_id]
                     pixel_distance = ((cx - prev_cx) ** 2 + (cy - prev_cy) ** 2) ** 0.5
                     frame_gap = self.frame_count - prev_frame
-                    if frame_gap == 1:
+                    # Was `frame_gap == 1`, which assumed detection ran on every single
+                    # frame. Now that detect_every_n can skip frames, consecutive
+                    # detections of the same vehicle are normally detect_every_n frames
+                    # apart - accept any gap up to that (both catches the very first
+                    # detection-to-detection transition and steady-state gaps).
+                    if 0 < frame_gap <= self.detect_every_n:
                         time_elapsed = frame_gap / self.fps_video
                         real_distance_m = pixel_distance * self.meters_per_pixel
                         speed_kph = (real_distance_m / time_elapsed) * 3.6
@@ -267,6 +310,7 @@ class CCTVDetector:
                         and vw >= self.min_vehicle_width_px and vh >= self.min_vehicle_height_px):
                     with self.state_lock:
                         self.ocr_pending.add(track_id)
+                    print(f"[plate-ocr] track {track_id}: submitting OCR job (box {vw}x{vh}px)")
                     # .copy() is important: vehicle_crop is a view into `frame`, which
                     # gets overwritten on the next loop iteration. Without copying, the
                     # background worker could end up reading pixels from a totally
@@ -321,68 +365,90 @@ class CCTVDetector:
             "plate_log": list(reversed(self.plate_log[-200:])),
         }
         self.conn.commit()
+
+        self._last_annotated = annotated_frame
+        self._last_stats = stats
         return annotated_frame, stats
+
+    def _get_thread_cascade(self):
+        """Returns this thread's own CascadeClassifier, building it on first use.
+        Never share one CascadeClassifier across threads - see the module-level
+        note by _PLATE_CASCADE_FILE for why."""
+        cascade = getattr(self._cascade_local, "cascade", None)
+        if cascade is None:
+            cascade = cv2.CascadeClassifier(_PLATE_CASCADE_FILE)
+            self._cascade_local.cascade = cascade
+        return cascade
 
     def _read_plate_worker(self, track_id, vehicle_crop, vh, vw):
         """Runs on a background thread pool. The cascade + EasyOCR call below touches
         no shared state, so it's safe to run fully in parallel with the main frame loop
         and other OCR workers - only the final 'apply the result' section needs the lock."""
         try:
-            gray = cv2.cvtColor(vehicle_crop, cv2.COLOR_BGR2GRAY)
-            plates = self.plate_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 14))
-
-            ocr_target_crop = None
-            v_px = v_py = v_pw = v_ph = 0
-            if len(plates) > 0:
-                (v_px, v_py, v_pw, v_ph) = plates[0]
-                aspect_ratio = v_pw / max(v_ph, 1)
-                if 2.0 <= aspect_ratio <= 6.0:
-                    ocr_target_crop = vehicle_crop[v_py:v_py + v_ph, v_px:v_px + v_pw]
-
-            if ocr_target_crop is None:
-                v_py = int(vh * 0.55)
-                v_px = int(vw * 0.1)
-                v_pw = int(vw * 0.8)
-                v_ph = int(vh * 0.4)
-                ocr_target_crop = vehicle_crop[v_py:v_py + v_ph, v_px:v_px + v_pw]
+            # Skip the cascade entirely - it was either missing real plates (too
+            # strict) or flagging non-plate regions (too loose), and tuning it
+            # further was a moving target. Every vehicle reliably shows its plate
+            # in roughly the same spot on a road-facing camera: bottom-center of
+            # the box. Check that region directly on every car instead of trying
+            # to first "find" the plate.
+            v_py = int(vh * 0.60)
+            v_px = int(vw * 0.20)
+            v_ph = int(vh * 0.35)
+            v_pw = int(vw * 0.60)
+            ocr_target_crop = vehicle_crop[v_py:v_py + v_ph, v_px:v_px + v_pw]
 
             if ocr_target_crop is None or ocr_target_crop.size == 0:
+                print(f"[plate-ocr] track {track_id}: empty crop region, skipping")
                 return
 
-            crop_h, crop_w = ocr_target_crop.shape[:2]
-            if crop_w < 150:
-                scale = 150 / crop_w
-                ocr_target_crop = cv2.resize(
-                    ocr_target_crop, (int(crop_w * scale), int(crop_h * scale)),
-                    interpolation=cv2.INTER_CUBIC
-                )
-
-            ocr_result = self.reader.readtext(
-                ocr_target_crop,
-                allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            # TEMP DEBUG: save what OCR is actually being asked to read, so we can
+            # look at it directly instead of guessing whether the footage is
+            # legible. Safe to delete this whole block + the plate_debug_crops
+            # folder once we've confirmed what's going on.
+            import os
+            os.makedirs("plate_debug_crops", exist_ok=True)
+            cv2.imwrite(
+                f"plate_debug_crops/track{track_id}_frame{self.frame_count}.jpg",
+                ocr_target_crop
             )
+
+            # Reading the raw cascade crop directly, no upscale/contrast preprocessing
+            # and no allowlist restriction - matches the simpler script that read
+            # plates accurately on this footage. The extra preprocessing steps we'd
+            # added (CLAHE, heavy upscaling) were apparently working against OCR
+            # rather than helping on crops this small/noisy.
+            ocr_result = self.reader.readtext(ocr_target_crop)
             if not ocr_result:
+                print(f"[plate-ocr] track {track_id}: OCR found no text in the plate region")
                 return
 
-            # Sort left-to-right by x-coordinate so multi-segment plates read correctly
-            ocr_result.sort(key=lambda r: r[0][0][0])
-            plate_text = "".join([res[1] for res in ocr_result]).strip()
-            avg_conf = float(sum(res[2] for res in ocr_result) / len(ocr_result))
+            # Take the first detected text segment only, exactly as the working
+            # script does - no averaging confidence across multiple segments.
+            plate_text = ocr_result[0][1].strip()
+            avg_conf = float(ocr_result[0][2])
 
-            has_letter = any(c.isalpha() for c in plate_text)
-            has_digit = any(c.isdigit() for c in plate_text)
-            plausible_plate = (4 <= len(plate_text) <= 10) and has_letter and has_digit
+            alnum_chars = sum(c.isalnum() for c in plate_text)
+            plausible_plate = len(plate_text) >= 4 and alnum_chars >= len(plate_text) * 0.7
 
-            if not (plausible_plate and avg_conf >= self.plate_min_confidence):
+            if not plausible_plate:
+                print(f"[plate-ocr] track {track_id}: read '{plate_text}' conf={avg_conf:.2f} "
+                      f"- failed plausibility check, discarding")
                 return
+
+            print(f"[plate-ocr] track {track_id}: ACCEPTED '{plate_text}' conf={avg_conf:.2f}")
 
             # --- Everything past this point touches shared state - lock required ---
             with self.state_lock:
-                existing = self.detected_plates.get(track_id)
-                if existing is not None and avg_conf <= existing["confidence"]:
+                if track_id in self.detected_plates:
+                    # Already have a reading for this vehicle - keep the first one,
+                    # exactly like the old script's `if track_id not in detected_plates`
+                    # check. No re-scanning/overwriting once something's been read.
                     return
 
-                is_locked = bool(avg_conf >= self.plate_lock_confidence)
+                # Lock immediately on the first accepted read - no separate
+                # low-confidence "still reading" state. Once a plate is read for
+                # this vehicle, it's done until the vehicle leaves the frame.
+                is_locked = True
                 norm_plate = plate_text.upper().replace(" ", "")
 
                 # --- Same-vehicle merge check ---
@@ -427,6 +493,12 @@ class CCTVDetector:
                             "confidence": round(avg_conf, 2),
                             "frame": self.frame_count,
                         })
+        except Exception:
+            # Anything raised here previously vanished silently - the future this
+            # runs in was never awaited, so an exception had nowhere to surface.
+            import traceback
+            print(f"[plate-ocr] track {track_id}: worker crashed:")
+            traceback.print_exc()
         finally:
             # Always clear the pending flag, even on error, so this vehicle isn't
             # permanently stuck un-retryable if something above raised.
