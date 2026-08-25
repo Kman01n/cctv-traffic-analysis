@@ -1,7 +1,7 @@
 export default function PlateLog({ plateLog }) {
   if (!plateLog || plateLog.length === 0) {
     return (
-      <div className="panel">
+      <div className="panel panel--log">
         <h2>📋 Plate Log (All Detected This Session)</h2>
         <p style={{ color: '#6b7280', fontSize: 13 }}>
           No plates locked yet — entries appear here permanently once read, and stay even
@@ -12,7 +12,7 @@ export default function PlateLog({ plateLog }) {
   }
 
   return (
-    <div className="panel">
+    <div className="panel panel--log">
       <h2>📋 Plate Log (All Detected This Session)</h2>
       <div style={{ maxHeight: 300, overflowY: 'auto' }}>
         <table>

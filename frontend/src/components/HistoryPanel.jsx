@@ -5,11 +5,13 @@ export default function HistoryPanel({ refreshKey }) {
   const [rows, setRows] = useState([])
 
   useEffect(() => {
+    // Backend returns {"data": [...]}; axios already unwraps the HTTP body into
+    // res.data, so the actual row array is one level deeper at res.data.data.
     api.history(10).then((res) => setRows(res.data.data)).catch(() => setRows([]))
   }, [refreshKey])
 
   return (
-    <div className="panel">
+    <div className="panel panel--history">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>📁 Historical Sessions</h2>
         <a href={api.downloadCsvUrl()}>

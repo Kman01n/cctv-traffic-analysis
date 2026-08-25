@@ -1,7 +1,7 @@
 export default function PlatesTable({ plates }) {
   if (!plates || plates.length === 0) {
     return (
-      <div className="panel">
+      <div className="panel panel--plates">
         <h2>🚘 Visible Plates</h2>
         <p style={{ color: '#6b7280', fontSize: 13 }}>No plates read yet.</p>
       </div>
@@ -9,7 +9,7 @@ export default function PlatesTable({ plates }) {
   }
 
   return (
-    <div className="panel">
+    <div className="panel panel--plates">
       <h2>🚘 Visible Plates</h2>
       <table>
         <thead>

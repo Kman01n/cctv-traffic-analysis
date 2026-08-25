@@ -67,7 +67,7 @@ export default function App() {
       </div>
 
       <div className="grid">
-        <div className="panel">
+        <div className="panel panel--feed">
           <h2>📹 Live Feed</h2>
           <VideoStream onStats={handleStats} />
         </div>

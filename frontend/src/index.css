@@ -1,10 +1,34 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+/* ============ Design tokens ============ */
+:root {
+  --concrete: #F3F4F6;      /* page background */
+  --paper: #FFFFFF;         /* panel background */
+  --asphalt: #1C2027;       /* primary text */
+  --slate: #6B7280;         /* secondary text */
+  --slate-100: #E2E4E8;     /* borders */
+  --slate-50: #F5F6F8;      /* subtle fills */
+
+  --signal-amber: #E8930C;  /* live feed / active */
+  --signal-amber-dark: #C97A08;
+  --route-green: #16A34A;   /* stats / go / start */
+  --route-green-dark: #128A3E;
+  --route-blue: #2563EB;    /* plates / recognition */
+  --route-blue-dark: #1D4ED8;
+  --flare-red: #DC2626;     /* stop / count line */
+  --flare-red-dark: #B91C1C;
+
+  --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #0f1117;
-  color: #e6e6e6;
+  font-family: var(--font-body);
+  background: var(--concrete);
+  color: var(--asphalt);
 }
 
 .app {
@@ -13,6 +37,7 @@ body {
   padding: 24px;
 }
 
+/* ============ Header ============ */
 .header {
   display: flex;
   align-items: center;
@@ -21,44 +46,64 @@ body {
 }
 
 .header h1 {
+  font-family: var(--font-display);
   font-size: 22px;
+  font-weight: 700;
   margin: 0;
+  letter-spacing: -0.01em;
 }
 
 .header .subtitle {
-  color: #9aa0ac;
+  color: var(--slate);
   font-size: 13px;
   margin-top: 4px;
 }
 
+/* ============ Controls bar ============ */
 .controls {
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  background: #161923;
+  background: var(--paper);
   padding: 14px 16px;
   border-radius: 10px;
   margin-bottom: 20px;
+  border: 1px solid var(--slate-100);
+  box-shadow: 0 1px 2px rgba(28, 32, 39, 0.04);
 }
 
 .controls input {
-  background: #0f1117;
-  border: 1px solid #2a2f3d;
-  color: #e6e6e6;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-100);
+  color: var(--asphalt);
   padding: 8px 10px;
   border-radius: 6px;
   font-size: 13px;
   min-width: 280px;
+  font-family: var(--font-body);
+}
+
+.controls input:focus {
+  outline: 2px solid var(--route-blue);
+  outline-offset: 1px;
+  border-color: var(--route-blue);
+}
+
+.controls input:disabled {
+  color: var(--slate);
+  cursor: not-allowed;
 }
 
 .controls label {
   font-size: 12px;
-  color: #9aa0ac;
+  color: var(--slate);
+  font-weight: 500;
 }
 
+/* ============ Buttons ============ */
 button {
-  background: #3b82f6;
+  background: var(--route-green);
   color: white;
   border: none;
   padding: 8px 16px;
@@ -66,22 +111,59 @@ button {
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
+  font-family: var(--font-body);
+  transition: background 0.15s ease;
 }
 
-button:hover { background: #2563eb; }
-button.stop { background: #ef4444; }
-button.stop:hover { background: #dc2626; }
-button:disabled { background: #374151; cursor: not-allowed; }
+button:hover { background: var(--route-green-dark); }
+button:focus-visible { outline: 2px solid var(--asphalt); outline-offset: 2px; }
 
+button.stop { background: var(--flare-red); }
+button.stop:hover { background: var(--flare-red-dark); }
+
+button:disabled { background: var(--slate-100); color: var(--slate); cursor: not-allowed; }
+
+/* ============ Status badge (with live pulse) ============ */
 .status-badge {
   font-size: 12px;
-  padding: 4px 10px;
+  padding: 4px 12px 4px 10px;
   border-radius: 20px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.status-live { background: #14532d; color: #4ade80; }
-.status-idle { background: #374151; color: #9ca3af; }
+.status-badge::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.status-live {
+  background: #FEF3E2;
+  color: var(--signal-amber-dark);
+}
+.status-live::before {
+  background: var(--signal-amber);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.status-idle {
+  background: var(--slate-100);
+  color: var(--slate);
+}
+.status-idle::before { background: var(--slate); }
 
+@media (prefers-reduced-motion: reduce) {
+  .status-live::before { animation: none; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(232, 147, 12, 0.5); }
+  50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(232, 147, 12, 0); }
+}
+
+/* ============ Grid + panels ============ */
 .grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -89,22 +171,42 @@ button:disabled { background: #374151; cursor: not-allowed; }
   margin-bottom: 20px;
 }
 
+@media (max-width: 800px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
 .panel {
-  background: #161923;
+  background: var(--paper);
   border-radius: 10px;
   padding: 16px;
+  border: 1px solid var(--slate-100);
+  border-top: 3px solid var(--slate-100);
+  box-shadow: 0 1px 2px rgba(28, 32, 39, 0.04);
 }
+
+/* Signal-light legend: each panel's role gets its own accent, matching the
+   traffic-signal color language already used elsewhere in the app (speed
+   colors, live badge, count line) rather than one flat accent everywhere. */
+.panel--feed { border-top-color: var(--signal-amber); }
+.panel--stats { border-top-color: var(--route-green); }
+.panel--plates { border-top-color: var(--route-blue); }
+.panel--log { border-top-color: var(--slate); }
+.panel--history { border-top-color: var(--signal-amber-dark); }
 
 .panel h2 {
-  font-size: 15px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
   margin: 0 0 12px 0;
-  color: #d1d5db;
+  color: var(--asphalt);
+  letter-spacing: -0.005em;
 }
 
+/* ============ Video ============ */
 .video-frame {
   width: 100%;
   border-radius: 8px;
-  background: #000;
+  background: var(--asphalt);
   aspect-ratio: 16/9;
   object-fit: contain;
 }
@@ -112,15 +214,17 @@ button:disabled { background: #374151; cursor: not-allowed; }
 .video-placeholder {
   width: 100%;
   aspect-ratio: 16/9;
-  background: #000;
+  background: var(--slate-50);
+  border: 1px dashed var(--slate-100);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6b7280;
+  color: var(--slate);
   font-size: 13px;
 }
 
+/* ============ Stats metrics ============ */
 .metrics-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -129,14 +233,26 @@ button:disabled { background: #374151; cursor: not-allowed; }
 }
 
 .metric {
-  background: #0f1117;
+  background: var(--slate-50);
   border-radius: 8px;
   padding: 10px 12px;
+  border: 1px solid var(--slate-100);
 }
 
-.metric .label { font-size: 11px; color: #9aa0ac; margin-bottom: 4px; }
-.metric .value { font-size: 20px; font-weight: 700; }
+.metric .label {
+  font-size: 11px;
+  color: var(--slate);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.metric .value {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--asphalt);
+}
 
+/* ============ Tables ============ */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -145,17 +261,40 @@ table {
 
 th, td {
   text-align: left;
-  padding: 6px 8px;
-  border-bottom: 1px solid #232734;
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--slate-100);
 }
 
-th { color: #9aa0ac; font-weight: 600; }
+th {
+  color: var(--slate);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
 
-.badge-locked { color: #4ade80; font-weight: 600; }
-.badge-reading { color: #facc15; }
+td { color: var(--asphalt); }
+
+tbody tr:hover { background: var(--slate-50); }
+
+.badge-locked {
+  color: var(--route-green-dark);
+  font-weight: 600;
+  background: #EAF7EF;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+.badge-reading {
+  color: var(--signal-amber-dark);
+  background: #FEF3E2;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+}
 
 .download-btn {
-  background: #10b981;
+  background: var(--route-blue);
   margin-top: 10px;
 }
-.download-btn:hover { background: #059669; }
+.download-btn:hover { background: var(--route-blue-dark); }

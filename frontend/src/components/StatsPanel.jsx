@@ -13,7 +13,7 @@ export default function StatsPanel({ stats }) {
   }))
 
   return (
-    <div className="panel">
+    <div className="panel panel--stats">
       <h2>📊 Live Stats</h2>
       <div className="metrics-row">
         <div className="metric">
